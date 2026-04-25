@@ -3,8 +3,10 @@ package main
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/arun-builds/httpfromtcp/internal/request"
@@ -69,6 +71,33 @@ func main() {
 		} else if req.RequestLine.RequestTarget == "/myproblem" {
 			body = respond500()
 			status = response.StatusInternalServerError
+		} else if strings.HasPrefix(req.RequestLine.RequestTarget, "/httpbin/stream") {
+			target := req.RequestLine.RequestTarget
+			resp, err := http.Get("https://httpbin.org/" + target[len("/httpbin/"):])
+			if err != nil {
+				body = respond500()
+				status = response.StatusInternalServerError
+			} else {
+				w.WriteStatusLine(response.StatusOK)
+				h.Delete("Content-length")
+				h.Set("transfer-encoding", "chunked")
+				h.Replace("content-type", "text/plain")
+				w.WriteHeaders(*h)
+				
+				for {
+					data := make([]byte, 32)
+					n, err := resp.Body.Read(data)
+					if err != nil{
+						break
+					}
+
+					w.WriteBody([]byte(fmt.Sprintf("%x\r\n", n)))
+					w.WriteBody(data[:n])
+					w.WriteBody([]byte("\r\n"))
+				}
+				w.WriteBody([]byte("0\r\n\r\n"))
+				return
+			}
 		}
 
 		h.Replace("Content-length", fmt.Sprintf("%d", len(body)))
