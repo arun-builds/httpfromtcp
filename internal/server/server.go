@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"net"
@@ -12,53 +11,36 @@ import (
 
 type Server struct {
 	closed  bool
-	handler	Handler
+	handler Handler
 }
 
-type HandleError struct{
-	StatusCode 	response.StatusCode
-	Message	string
+type HandleError struct {
+	StatusCode response.StatusCode
+	Message    string
 }
-type Handler func(w io.Writer, req *request.Request) *HandleError
+type Handler func(w *response.Writer, req *request.Request)
 
-func runConnection(s *Server, conn io.ReadWriteCloser){
+func runConnection(s *Server, conn io.ReadWriteCloser) {
 	defer conn.Close()
 
-	
-	headers := response.GetDefaultHeaders(0)
+	responseWriter := response.NewWriter(conn)
 
-	
-	r, err  := request.RequestFromReader(conn)
-	if err != nil{
-		response.WriteStatusLine(conn, response.StatusBadRequest)
-		response.WriteHeaders(conn, headers)
+	r, err := request.RequestFromReader(conn)
+	if err != nil {
+		responseWriter.WriteStatusLine(response.StatusBadRequest)
+		responseWriter.WriteHeaders(*response.GetDefaultHeaders(0))
 		return
 	}
 
-	
-	writer := bytes.NewBuffer([]byte{})
-	handlerError := s.handler(writer, r)
+	s.handler(responseWriter, r)
 
-	var body []byte = nil
-	var status response.StatusCode = response.StatusOK
-	if handlerError != nil {
-		status = handlerError.StatusCode
-		body = []byte(handlerError.Message)
-	}else{
-		body = writer.Bytes()
-	}
-	
-	headers.Replace("Content-length", fmt.Sprintf("%d", len(body)))
-	response.WriteStatusLine(conn, status)
-	response.WriteHeaders(conn, headers)
-	conn.Write(body)
 }
 
 func runServer(s *Server, listener net.Listener) {
 
 	for {
 		conn, err := listener.Accept()
-		if s.closed{
+		if s.closed {
 			return
 		}
 		if err != nil {
@@ -76,9 +58,9 @@ func Serve(port uint16, handler Handler) (*Server, error) {
 		return nil, err
 	}
 	server := &Server{
-		 closed: false,
-		 handler: handler,
-		}
+		closed:  false,
+		handler: handler,
+	}
 	go runServer(server, listener)
 	return server, nil
 }
