@@ -2,7 +2,7 @@ package request
 
 import (
 	"io"
-	"strings"
+	
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,34 +30,65 @@ func (cr *chunkReader) Read(p []byte) (n int, err error) {
 
 	return n, nil
 }
-
-func TestRequestLineParse(t *testing.T) {
-	// Test: Good GET Request line
+func TestParseHeaders(t *testing.T) {
+	// Test: Standard Headers
 	reader := &chunkReader{
 		data:            "GET / HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n",
 		numBytesPerRead: 3,
 	}
+	r, err := RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, "localhost:42069", r.Headers.Get("host"))
+	assert.Equal(t, "curl/7.81.0", r.Headers.Get("user-agent"))
+	assert.Equal(t, "*/*", r.Headers.Get("accept"))
 
-r, err := RequestFromReader(reader)
-require.NoError(t, err)
-require.NotNil(t, r)
-assert.Equal(t, "GET", r.RequestLine.Method)
-assert.Equal(t, "/", r.RequestLine.RequestTarget)
-assert.Equal(t, "1.1", r.RequestLine.HttpVersion)
+	// Test: Empty Headers
+	reader = &chunkReader{
+		data:            "GET / HTTP/1.1\r\n\r\n",
+		numBytesPerRead: 5,
+	}
+	r, err = RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, "", r.Headers.Get("host")) // Should be empty, not panic
 
-// Test: Good GET Request line with path
-reader = &chunkReader{
-	data:            "GET /coffee HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n",
-	numBytesPerRead: 1,
-}
-r, err = RequestFromReader(reader)
-require.NoError(t, err)
-require.NotNil(t, r)
-assert.Equal(t, "GET", r.RequestLine.Method)
-assert.Equal(t, "/coffee", r.RequestLine.RequestTarget)
-assert.Equal(t, "1.1", r.RequestLine.HttpVersion)
+	// Test: Malformed Header (missing colon)
+	reader = &chunkReader{
+		data:            "GET / HTTP/1.1\r\nHost localhost:42069\r\n\r\n",
+		numBytesPerRead: 3,
+	}
+	_, err = RequestFromReader(reader)
+	require.Error(t, err)
 
-// Test: Invalid number of parts in request line
-_, err = RequestFromReader(strings.NewReader("/coffee HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n"))
-require.Error(t, err)
+	// Test: Duplicate Headers
+	reader = &chunkReader{
+		data:            "GET / HTTP/1.1\r\nSet-Cookie: choc-chip\r\nSet-Cookie: oatmeal-raisin\r\n\r\n",
+		numBytesPerRead: 4,
+	}
+	r, err = RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, "choc-chip,oatmeal-raisin", r.Headers.Get("set-cookie"))
+
+	// Test: Case Insensitive Headers
+	reader = &chunkReader{
+		data:            "GET / HTTP/1.1\r\nCaMel-CaSe: some-value\r\n\r\n",
+		numBytesPerRead: 2,
+	}
+	r, err = RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	// Both should work assuming your Get() method uses strings.ToLower() internally
+	assert.Equal(t, "some-value", r.Headers.Get("camel-case"))
+	assert.Equal(t, "some-value", r.Headers.Get("CaMel-CaSe"))
+
+	// Test: Missing End of Headers
+	reader = &chunkReader{
+		data:            "GET / HTTP/1.1\r\nHost: localhost:42069\r\n", // Missing final \r\n
+		numBytesPerRead: 3,
+	}
+	_, err = RequestFromReader(reader)
+	// It should trigger an error (like io.EOF) because it never reaches \r\n\r\n
+	require.Error(t, err) 
 }

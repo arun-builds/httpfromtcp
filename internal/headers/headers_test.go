@@ -44,5 +44,18 @@ func TestHeaderParse(t *testing.T) {
 		require.Error(t, err)
 		assert.Equal(t, 0, n)
 		assert.False(t, done)
+
+		// Test: Multiple headers with the same key combine with a comma
+	headers = NewHeaders()
+	
+	headers.headers["set-person"] = "lane-loves-go"
+	
+	data = []byte("Set-Person: prime-loves-zig\r\nSet-Person: tj-loves-ocaml\r\n\r\n")
+	n, done, err = headers.Parse(data)
+	
+	require.NoError(t, err)
+	
+	assert.Equal(t, "lane-loves-go,prime-loves-zig,tj-loves-ocaml", headers.Get("set-person"))
+	assert.True(t, done)
 	}
 
