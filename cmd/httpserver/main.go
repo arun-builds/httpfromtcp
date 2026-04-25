@@ -81,7 +81,30 @@ func main() {
 		} else if req.RequestLine.RequestTarget == "/myproblem" {
 			body = respond500()
 			status = response.StatusInternalServerError
-		} else if strings.HasPrefix(req.RequestLine.RequestTarget, "/httpbin/") {
+		} else if req.RequestLine.RequestTarget == "/video" {
+			// mkdir assets
+			// curl -o assets/vim.mp4 https://storage.googleapis.com/qvault-webapp-dynamic-assets/lesson_videos/vim-vs-neovim-prime.mp4
+
+			
+			f, err := os.ReadFile("assets/vim.mp4")
+			if err != nil {
+				body := respond500()
+				h.Replace("Content-type", "text/html")
+				h.Replace("Content-length", fmt.Sprintf("%d", len(body)))
+				w.WriteStatusLine(response.StatusInternalServerError)
+				w.WriteHeaders(*h)
+				w.WriteBody(body)
+				return
+			}
+
+			h.Replace("Content-type", "video/mp4")
+			h.Replace("content-length", fmt.Sprintf("%d", len(f)))
+
+			w.WriteStatusLine(response.StatusOK)
+			w.WriteHeaders(*h)
+			w.WriteBody(f)
+
+			} else if strings.HasPrefix(req.RequestLine.RequestTarget, "/httpbin/") {
 			target := req.RequestLine.RequestTarget
 			resp, err := http.Get("https://httpbin.org/" + target[len("/httpbin/"):])
 			if err != nil {
