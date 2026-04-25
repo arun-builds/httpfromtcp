@@ -2,6 +2,7 @@ package request
 
 import (
 	"bytes"
+	"strconv"
 
 	"fmt"
 	"io"
@@ -21,12 +22,28 @@ type Request struct {
 	RequestLine RequestLine
 	Headers     *headers.Headers
 	state       parserState
+	Body 	string
+}
+
+func getInt(headers *headers.Headers, name string, defaultValue int)int{
+	valueStr, exists := headers.Get(name)
+	if !exists{
+		return defaultValue
+	}
+
+	value, err := strconv.Atoi(valueStr)
+	if err != nil{
+		return defaultValue
+	}
+
+	return value
 }
 
 func newRequest() *Request {
 	return &Request{
 		state:   StateInit,
 		Headers: headers.NewHeaders(),
+		Body: "",
 	}
 }
 
@@ -38,6 +55,7 @@ var SEPARATOR = []byte("\r\n")
 const (
 	StateInit    parserState = "initialized"
 	StateHeaders parserState = "headers"
+	StateBody    parserState = "body"
 	StateDone    parserState = "done"
 	StateError   parserState = "error"
 )
@@ -71,12 +89,21 @@ func parseRequestLine(b []byte) (*RequestLine, int, error) {
 	return rl, read, nil
 }
 
+func (r *Request) hasBody() bool{
+	// TODO: when doing chunked encoding, update this method
+	length := getInt(r.Headers, "content-length", 0)
+	return length > 0
+}
+
 func (r *Request) parse(data []byte) (int, error) {
 
 	read := 0
 outer:
 	for {
 		currentData := data[read:]
+		if len(currentData) == 0{
+			break outer
+		}
 		switch r.state {
 		case StateError:
 			return 0, ERROR_REQUEST_ERROR_STATE
@@ -97,18 +124,41 @@ outer:
 		case StateHeaders:
 			n, done, err := r.Headers.Parse(currentData)
 			if err != nil {
+				r.state = StateError
 				return 0, err
 			}
 
-			if n == 0{
+			if n == 0 {
 				break outer
 			}
 
 			read += n
 
+			// in real world we would not get EOF after reading data
+			// therefor we would nicely transition to body, whichc would allow
+			// us to then transition to don, but doing the transition here
 			if done {
+				if r.hasBody(){
+				r.state = StateBody
+				}else{
+					r.state = StateDone
+				}
+			}
+		
+		case StateBody:
+			length := getInt(r.Headers, "content-length", 0)
+			if length == 0{
+				panic("chunked not implemented")
+			}
+
+			remaining := min(length - len(r.Body), len(currentData))
+			r.Body += string(currentData[:remaining])
+			read += remaining
+
+			if len(r.Body) == length{
 				r.state = StateDone
 			}
+		
 		case StateDone:
 			break outer
 

@@ -39,9 +39,15 @@ func TestParseHeaders(t *testing.T) {
 	r, err := RequestFromReader(reader)
 	require.NoError(t, err)
 	require.NotNil(t, r)
-	assert.Equal(t, "localhost:42069", r.Headers.Get("host"))
-	assert.Equal(t, "curl/7.81.0", r.Headers.Get("user-agent"))
-	assert.Equal(t, "*/*", r.Headers.Get("accept"))
+	host, ok := r.Headers.Get("host")
+	require.True(t, ok)
+	assert.Equal(t, "localhost:42069", host)
+	ua, ok := r.Headers.Get("user-agent")
+	require.True(t, ok)
+	assert.Equal(t, "curl/7.81.0", ua)
+	accept, ok := r.Headers.Get("accept")
+	require.True(t, ok)
+	assert.Equal(t, "*/*", accept)
 
 	// Test: Empty Headers
 	reader = &chunkReader{
@@ -51,7 +57,9 @@ func TestParseHeaders(t *testing.T) {
 	r, err = RequestFromReader(reader)
 	require.NoError(t, err)
 	require.NotNil(t, r)
-	assert.Equal(t, "", r.Headers.Get("host")) // Should be empty, not panic
+	host, ok = r.Headers.Get("host")
+	assert.False(t, ok)
+	assert.Equal(t, "", host)
 
 	// Test: Malformed Header (missing colon)
 	reader = &chunkReader{
@@ -69,7 +77,9 @@ func TestParseHeaders(t *testing.T) {
 	r, err = RequestFromReader(reader)
 	require.NoError(t, err)
 	require.NotNil(t, r)
-	assert.Equal(t, "choc-chip,oatmeal-raisin", r.Headers.Get("set-cookie"))
+	cookie, ok := r.Headers.Get("set-cookie")
+	require.True(t, ok)
+	assert.Equal(t, "choc-chip,oatmeal-raisin", cookie)
 
 	// Test: Case Insensitive Headers
 	reader = &chunkReader{
@@ -80,8 +90,12 @@ func TestParseHeaders(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, r)
 	// Both should work assuming your Get() method uses strings.ToLower() internally
-	assert.Equal(t, "some-value", r.Headers.Get("camel-case"))
-	assert.Equal(t, "some-value", r.Headers.Get("CaMel-CaSe"))
+	v, ok := r.Headers.Get("camel-case")
+	require.True(t, ok)
+	assert.Equal(t, "some-value", v)
+	v, ok = r.Headers.Get("CaMel-CaSe")
+	require.True(t, ok)
+	assert.Equal(t, "some-value", v)
 
 	// Test: Missing End of Headers
 	reader = &chunkReader{
@@ -91,4 +105,70 @@ func TestParseHeaders(t *testing.T) {
 	_, err = RequestFromReader(reader)
 	// It should trigger an error (like io.EOF) because it never reaches \r\n\r\n
 	require.Error(t, err) 
+}
+func TestParseBody(t *testing.T) {
+	// Test: Standard Body
+	reader := &chunkReader{
+		data: "POST /submit HTTP/1.1\r\n" +
+			"Host: localhost:42069\r\n" +
+			"Content-Length: 13\r\n" +
+			"\r\n" +
+			"hello world!\n",
+		numBytesPerRead: 3,
+	}
+	r, err := RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, "hello world!\n", string(r.Body))
+
+	// Test: Empty Body, 0 reported content length
+	reader = &chunkReader{
+		data: "POST /submit HTTP/1.1\r\n" +
+			"Host: localhost:42069\r\n" +
+			"Content-Length: 0\r\n" +
+			"\r\n",
+		numBytesPerRead: 4,
+	}
+	r, err = RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Empty(t, r.Body) // Body should be empty but correctly parsed
+
+	// Test: Empty Body, no reported content length
+	reader = &chunkReader{
+		data: "GET / HTTP/1.1\r\n" +
+			"Host: localhost:42069\r\n" +
+			"\r\n",
+		numBytesPerRead: 2,
+	}
+	r, err = RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Empty(t, r.Body)
+
+	// Test: Body shorter than reported content length
+	reader = &chunkReader{
+		data: "POST /submit HTTP/1.1\r\n" +
+			"Host: localhost:42069\r\n" +
+			"Content-Length: 20\r\n" +
+			"\r\n" +
+			"partial content",
+		numBytesPerRead: 3,
+	}
+	_, err = RequestFromReader(reader)
+	require.Error(t, err) // Should error because EOF is reached before reading 20 bytes
+
+	// Test: No Content-Length but Body Exists
+	// We assume that without a Content-Length header, the parser shouldn't try to read a body.
+	reader = &chunkReader{
+		data: "POST /submit HTTP/1.1\r\n" +
+			"Host: localhost:42069\r\n" +
+			"\r\n" +
+			"ghost body data",
+		numBytesPerRead: 5,
+	}
+	r, err = RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Empty(t, r.Body) // The body should be empty since no Content-Length told it to read
 }
